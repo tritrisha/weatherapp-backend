@@ -1,80 +1,73 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
-from pymongo import MongoClient
-from datetime import datetime, timedelta
-import certifi
 import os
 from dotenv import load_dotenv
+from pymongo import MongoClient
+import certifi
+from datetime import datetime, timedelta
 
+# Load environment variables from .env
 load_dotenv()
 
+# Create Flask app
 app = Flask(__name__)
 CORS(app)
 
-# Load secrets from .env
+# Connect to MongoDB
 MONGO_URI = os.getenv("MONGO_URI")
+client = MongoClient(MONGO_URI, tls=True, tlsCAFile=certifi.where())
+db = client.weather_app
+collection = db.weather_data
+
+# Weather API key
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 
-client = MongoClient(MONGO_URI, tls=True, tlsCAFile=certifi.where())
-db = client.weatherDB
-collection = db.weatherData
-
-@app.route('/')
+@app.route("/", methods=["GET"])
 def home():
-    return "🌤️ Weather API is running!"
+    return "✅ Weather API is live!"
 
-@app.route('/api/weather', methods=['POST'])
+@app.route("/api/weather", methods=["POST"])
 def get_weather():
-    data = request.get_json()
-    city = data.get('city')
-
-    if not city:
-        return jsonify({'error': 'City name is required'}), 400
-
     try:
-        # Step 1: Check cache in MongoDB
-        existing_data = collection.find_one({'city': city.lower()})
-        
-        if existing_data:
-            last_updated = existing_data.get('timestamp')
-            if last_updated:
-                time_diff = datetime.utcnow() - last_updated
-                if time_diff < timedelta(hours=4):
-                    print("✅ Returning cached weather data")
-                    return jsonify(existing_data['weather'])
+        data = request.get_json()
+        city = data.get("city")
 
-        # Step 2: Fetch fresh weather from OpenWeatherMap
-        api_url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric"
-        response = requests.get(api_url)
+        if not city:
+            return jsonify({"error": "City is required"}), 400
+
+        city = city.strip().lower()
+
+        # Check MongoDB cache: allow only one request every 4 hours per city
+        cached = collection.find_one({"city": city})
+        now = datetime.utcnow()
+
+        if cached and (now - cached["timestamp"]) < timedelta(hours=4):
+            print("📦 Serving from cache")
+            return jsonify(cached["data"])
+
+        # Call OpenWeatherMap API
+        url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric"
+        response = requests.get(url)
 
         if response.status_code != 200:
-            return jsonify({'error': 'City not found or API error'}), response.status_code
+            return jsonify({"error": "City not found or server error"}), 500
 
         weather_data = response.json()
 
-        # Step 3: Save fresh data to MongoDB
+        # Store in MongoDB (update or insert)
         collection.update_one(
-            {'city': city.lower()},
-            {
-                '$set': {
-                    'city': city.lower(),
-                    'weather': weather_data,
-                    'timestamp': datetime.utcnow()
-                }
-            },
+            {"city": city},
+            {"$set": {"data": weather_data, "timestamp": now}},
             upsert=True
         )
 
-        print("✅ Fetched fresh weather and saved to DB")
         return jsonify(weather_data)
 
     except Exception as e:
-        print("❗ ERROR:", e)
-        return jsonify({'error': 'Server error'}), 500
+        print("❌ ERROR:", str(e))
+        return jsonify({"error": "Internal Server Error"}), 500
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5050, debug=True)
-
-
-# curl "https://api.openweathermap.org/data/2.5/weather?q=London&appid=6d83156e4e40ca97d0c6924b832fe00c"
+# Run locally only
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5050, debug=True)
