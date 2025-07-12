@@ -1,7 +1,8 @@
 Flask
 flask-cors
 requests
-pymongo
-certifi
 python-dotenv
+pymongo
+dnspython
+certifi
 gunicorn
