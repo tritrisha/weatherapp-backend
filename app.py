@@ -11,7 +11,11 @@ app = Flask(__name__)
 CORS(app)
 
 MONGO_URI = os.getenv("MONGO_URI")
-client = MongoClient(MONGO_URI, tls=True, tlsCAFile=certifi.where())
+client = MongoClient(
+    MONGO_URI,
+    tls=True,
+    tlsAllowInvalidCertificates=True
+)
 db = client.weather_app
 collection = db.weather_data
 
@@ -59,3 +63,9 @@ def get_weather():
 # Run locally only
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5050, debug=True)
+
+# curl -X POST "https://weatherapp-backend-6jhn.onrender.com/api/weather" \
+#   -H "Content-Type: application/json" \
+#   -d '{"city": "London"}'
+
+#curl -X POST "https://weatherapp-backend-6jhn.onrender.com/api/weather" -H "Content-Type: application/json" -d '{"city": "London"}'
