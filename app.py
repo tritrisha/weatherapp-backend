@@ -67,6 +67,7 @@ def get_weather():
     except Exception as e:
         print("❌ ERROR:", str(e))
         return jsonify({"error": "Internal Server Error"}), 500
+    
 
 # Run locally only
 if __name__ == "__main__":
