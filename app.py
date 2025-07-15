@@ -29,34 +29,51 @@ def home():
 def get_weather():
     try:
         data = request.get_json()
-        city = data.get("city", "").strip().lower()
+        city = data.get("city")
+
         if not city:
             return jsonify({"error": "City is required"}), 400
 
-        cached = collection.find_one({"city": city})
+        city = city.strip().lower()
         now = datetime.utcnow()
 
-        if cached and (now - cached["timestamp"]) < timedelta(hours=4):
+        # Check for cached data
+        cached = collection.find_one({"city": city})
+
+        # If data exists and is recent (within 12 hours), return from cache
+        if cached and (now - cached["timestamp"]) < timedelta(hours=12):
             print("📦 Serving from cache")
             return jsonify(cached["data"])
 
+        # Call OpenWeatherMap API
         url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric"
         response = requests.get(url)
 
         if response.status_code != 200:
-            return jsonify({"error": "City not found or API error"}), 500
+            return jsonify({"error": "City not found or server error"}), 500
 
         weather_data = response.json()
+
+        # Update MongoDB with new data and timestamp
         collection.update_one(
             {"city": city},
             {"$set": {"data": weather_data, "timestamp": now}},
             upsert=True
         )
+
+        print("🌐 Fetched new data from API")
         return jsonify(weather_data)
 
     except Exception as e:
-        print("❌ Error:", e)
+        print("❌ ERROR:", str(e))
         return jsonify({"error": "Internal Server Error"}), 500
+    
+@app.route("/api/clear_cache", methods=["POST"])
+def clear_cache():
+    collection.delete_many({})
+    return jsonify({"message": "Cache cleared"})
+
+
 
     
 
