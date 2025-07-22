@@ -17,7 +17,7 @@ client = MongoClient(
     tlsAllowInvalidCertificates=True
 )
 db = client.weather_app
-collection = db.weather_data
+city_collection = db.cities
 
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 
@@ -73,7 +73,20 @@ def clear_cache():
     collection.delete_many({})
     return jsonify({"message": "Cache cleared"})
 
+@app.route("/api/city-suggestions", methods=["GET"])
+def city_suggestions():
+    prefix = request.args.get("q", "").strip()
 
+    if not prefix:
+        return jsonify([])
+
+    # Find top 3 cities matching the prefix (case-insensitive)
+    results = city_collection.find(
+        {"name": {"$regex": f"^{prefix}", "$options": "i"}}
+    ).limit(3)
+
+    city_list = [f"{c['name']}, {c['country']}" for c in results]
+    return jsonify(city_list)
 
     
 
