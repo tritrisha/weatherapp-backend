@@ -35,16 +35,25 @@ def home():
 # City suggestions (autocomplete)
 @app.route("/api/city-suggestions", methods=["GET"])
 def city_suggestions():
-    prefix = request.args.get("q", "").strip()
-    if not prefix:
+    query = request.args.get("q", "").strip()
+    if not query:
         return jsonify([])
 
-    results = city_collection.find(
-        {"name": {"$regex": f"^{prefix}", "$options": "i"}}
-    ).limit(3)
+    try:
+        geo_url = f"http://api.openweathermap.org/geo/1.0/direct?q={query}&limit=5&appid={WEATHER_API_KEY}"
+        response = requests.get(geo_url)
+        if response.status_code != 200:
+            return jsonify([])
 
-    city_list = [f"{c['name']}, {c['country']}" for c in results]
-    return jsonify(city_list)
+        data = response.json()
+        suggestions = [f"{city['name']}, {city['country']}" for city in data]
+        return jsonify(suggestions)
+
+    except Exception as e:
+        print("❌ ERROR:", str(e))
+        return jsonify([])
+
+
 
 # Weather endpoint
 @app.route("/api/weather", methods=["POST"])
