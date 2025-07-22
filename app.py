@@ -1,30 +1,52 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import requests, os
-from dotenv import load_dotenv
 from pymongo import MongoClient
+from dotenv import load_dotenv
+import os
 import certifi
 from datetime import datetime, timedelta
+import requests
 
+# Load environment variables
 load_dotenv()
+
+# Initialize Flask app
 app = Flask(__name__)
 CORS(app)
 
+# MongoDB connection
 MONGO_URI = os.getenv("MONGO_URI")
-client = MongoClient(
-    MONGO_URI,
-    tls=True,
-    tlsAllowInvalidCertificates=True
-)
+client = MongoClient(MONGO_URI, tls=True, tlsCAFile=certifi.where())
 db = client.weather_app
-city_collection = db.cities
 
+# Collections
+collection = db.weather_data        # For weather data caching
+city_collection = db.cities         # For city suggestions
+
+# Weather API Key
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 
-@app.route("/")
-def home():
-    return "✅ Weather API is live!"
+# ----------------- ROUTES -----------------
 
+@app.route("/", methods=["GET"])
+def home():
+    return "✅ Weather API is running!"
+
+# City suggestions (autocomplete)
+@app.route("/api/city-suggestions", methods=["GET"])
+def city_suggestions():
+    prefix = request.args.get("q", "").strip()
+    if not prefix:
+        return jsonify([])
+
+    results = city_collection.find(
+        {"name": {"$regex": f"^{prefix}", "$options": "i"}}
+    ).limit(3)
+
+    city_list = [f"{c['name']}, {c['country']}" for c in results]
+    return jsonify(city_list)
+
+# Weather endpoint
 @app.route("/api/weather", methods=["POST"])
 def get_weather():
     try:
@@ -37,15 +59,13 @@ def get_weather():
         city = city.strip().lower()
         now = datetime.utcnow()
 
-        # Check for cached data
+        # Check cache
         cached = collection.find_one({"city": city})
-
-        # If data exists and is recent (within 12 hours), return from cache
         if cached and (now - cached["timestamp"]) < timedelta(hours=12):
-            print("📦 Serving from cache")
+            print("📦 Serving weather from cache")
             return jsonify(cached["data"])
 
-        # Call OpenWeatherMap API
+        # Fetch from API
         url = f"https://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric"
         response = requests.get(url)
 
@@ -54,48 +74,19 @@ def get_weather():
 
         weather_data = response.json()
 
-        # Update MongoDB with new data and timestamp
+        # Update cache
         collection.update_one(
             {"city": city},
             {"$set": {"data": weather_data, "timestamp": now}},
             upsert=True
         )
 
-        print("🌐 Fetched new data from API")
         return jsonify(weather_data)
 
     except Exception as e:
         print("❌ ERROR:", str(e))
         return jsonify({"error": "Internal Server Error"}), 500
-    
-@app.route("/api/clear_cache", methods=["POST"])
-def clear_cache():
-    collection.delete_many({})
-    return jsonify({"message": "Cache cleared"})
 
-@app.route("/api/city-suggestions", methods=["GET"])
-def city_suggestions():
-    prefix = request.args.get("q", "").strip()
-
-    if not prefix:
-        return jsonify([])
-
-    # Find top 3 cities matching the prefix (case-insensitive)
-    results = city_collection.find(
-        {"name": {"$regex": f"^{prefix}", "$options": "i"}}
-    ).limit(3)
-
-    city_list = [f"{c['name']}, {c['country']}" for c in results]
-    return jsonify(city_list)
-
-    
-
-# Run locally only
+# ----------------- MAIN -----------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5050, debug=True)
-
-# curl -X POST "https://weatherapp-backend-6jhn.onrender.com/api/weather" \
-#   -H "Content-Type: application/json" \
-#   -d '{"city": "London"}'
-
-#curl -X POST "https://weatherapp-backend-6jhn.onrender.com/api/weather" -H "Content-Type: application/json" -d '{"city": "London"}'
